@@ -1,0 +1,89 @@
+apiVersion: cosmos.strange.love/v1
+kind: CosmosFullNode
+metadata:
+  name: osmosis-mainnet
+spec:
+  replicas: 2
+
+  chain:
+    network: mainnet
+    chainID: osmosis-1
+    binary: osmosisd
+    homeDir: .osmosisd
+    skipInvariants: true
+    genesisURL: "https://snapshots.polkachu.com/genesis/osmosis/genesis.json"
+    snapshotURL: ""
+
+    # CometBFT config (translates to config.toml)
+    config:
+      peers: "58dd2e9d4daaad6b7ae1eaa6beee5248cc333869@65.108.234.159:36656,8e1cf1149a5c16ad1733db8921581be99ddb7602@65.108.201.138:12556"
+      seeds: "ade4d8bc8cbe014af6ebdf3cb7b1e9ad36f412c0@seeds.polkachu.com:12556"
+
+      maxInboundPeers: 10
+      maxOutboundPeers: 10
+      corsAllowedOrigins: ["*"]
+      overrides: |-
+        # Set config.toml overrides here. Such as:
+        [tx_index]
+        indexer = "kv"
+
+    # Cosmos SDK config (translates to app.toml)
+    app:
+      minGasPrice: "0uosmo"
+      #apiEnableUnsafeCORS: true
+      #grpcWebEnableUnsafeCORS: true
+      # No need to set pruning in toml, set it here instead:
+      pruning:
+        strategy: "custom"
+        interval: 10
+        keepEvery: 0
+        keepRecent: 100
+        minRetainBlocks: 10
+      #haltHeight: 12345678
+      overrides: |-
+        # Set app.toml overrides here. Such as:
+        #[rosetta]
+        #enable = true
+
+  # Rolling deployment strategy
+  #strategy:
+    # Can be an int like 1 or a percentage.
+    #maxUnavailable: 50%
+
+  # Configure pods
+  podTemplate:
+    # Required
+    image: "osmolabs/osmosis:31.0.0-alpine"
+    resources:
+      requests:
+        cpu: "1"
+        memory: 10Gi
+      limits:
+        cpu: "2"
+        memory: 10Gi
+
+  service:
+    # Creates N LoadBalancer services and exposes those public IPs in p2p.
+    maxP2PExternalAddresses: 1
+  volumeRetentionPolicy: "Delete"
+
+  # Configure PVCs for each pod
+  volumeClaimTemplate:
+    # Required
+    storageClassName: "microk8s-hostpath"
+    resources:
+      requests:
+        storage: 100Gi
+    accessModes: ["ReadWriteMany"]
+    # volumeMode: "Block"
+
+  # Optional self-healing strategies.
+  selfHeal:
+    # Reboot pods that fall to far behind and still report as in-sync.
+    heightDriftMitigation:
+      threshold: 1000
+    # Automatically expand PVCs that are running out of space.
+    pvcAutoScale:
+      increaseQuantity: 10%
+      maxSize: 200Gi
+      usedSpacePercentage: 90
